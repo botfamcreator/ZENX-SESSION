@@ -1,5 +1,5 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, delay } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, delay } = require('@whiskeysockets/baodeys');
 const pino = require('pino');
 const QRCode = require('qrcode');
 const path = require('path');
@@ -10,6 +10,7 @@ app.use(express.static('public'));
 
 app.get('/pair', async (req, res) => {
     let num = req.query.num;
+    if (!num) return res.send("Please provide a number.");
     const { state, saveCreds } = await useMultiFileAuthState('temp_session');
     const conn = makeWASocket({ auth: state, logger: pino({ level: 'silent' }) });
 
@@ -23,8 +24,9 @@ app.get('/pair', async (req, res) => {
     conn.ev.on('connection.update', async (s) => {
         if (s.connection === 'open') {
             const sessionID = Buffer.from(JSON.stringify(conn.authState.creds)).toString('base64');
-            await conn.sendMessage(conn.user.id, { text: `Zenx;${sessionID}` });
-            process.exit(0);
+            // ഇവിടെയാണ് ഫോർമാറ്റ് മാറ്റിയിരിക്കുന്നത്
+            await conn.sendMessage(conn.user.id, { text: `Zenx~${sessionID}` });
+            console.log("Session sent with Zenx~ format!");
         }
     });
 });
@@ -33,7 +35,6 @@ app.get('/qr', async (req, res) => {
     const { state, saveCreds } = await useMultiFileAuthState('temp_qr');
     const conn = makeWASocket({ auth: state, logger: pino({ level: 'silent' }) });
 
-    conn.ev.on('events.on', () => {});
     conn.ev.on('connection.update', async (s) => {
         if (s.qr) {
             let url = await QRCode.toDataURL(s.qr);
@@ -41,12 +42,14 @@ app.get('/qr', async (req, res) => {
         }
         if (s.connection === 'open') {
             const sessionID = Buffer.from(JSON.stringify(conn.authState.creds)).toString('base64');
-            await conn.sendMessage(conn.user.id, { text: `Zenx;${sessionID}` });
-            process.exit(0);
+            // ക്യുആർ വഴി ലോഗിൻ ചെയ്താലും Zenx~ എന്ന് വരും
+            await conn.sendMessage(conn.user.id, { text: `Zenx~${sessionID}` });
+            console.log("Session sent with Zenx~ format!");
         }
     });
     conn.ev.on('creds.update', saveCreds);
 });
 
-app.listen(PORT, () => console.log(`Generator running on port ${POR
-T}`));
+app.listen(PORT, () => {
+    console.log(`Generator running on port ${PORT}`);
+});
