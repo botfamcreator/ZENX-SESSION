@@ -1,5 +1,5 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, delay } = require('@whiskeysockets/baodeys');
+const { default: makeWASocket, useMultiFileAuthState, delay } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const QRCode = require('qrcode');
 const path = require('path');
@@ -24,7 +24,6 @@ app.get('/pair', async (req, res) => {
     conn.ev.on('connection.update', async (s) => {
         if (s.connection === 'open') {
             const sessionID = Buffer.from(JSON.stringify(conn.authState.creds)).toString('base64');
-            // ഇവിടെയാണ് ഫോർമാറ്റ് മാറ്റിയിരിക്കുന്നത്
             await conn.sendMessage(conn.user.id, { text: `Zenx~${sessionID}` });
             console.log("Session sent with Zenx~ format!");
         }
@@ -42,7 +41,6 @@ app.get('/qr', async (req, res) => {
         }
         if (s.connection === 'open') {
             const sessionID = Buffer.from(JSON.stringify(conn.authState.creds)).toString('base64');
-            // ക്യുആർ വഴി ലോഗിൻ ചെയ്താലും Zenx~ എന്ന് വരും
             await conn.sendMessage(conn.user.id, { text: `Zenx~${sessionID}` });
             console.log("Session sent with Zenx~ format!");
         }
