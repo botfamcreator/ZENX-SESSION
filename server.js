@@ -1,53 +1,79 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, delay } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, delay, makeCacheableSignalKeyStore, jidNormalizedUser } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const QRCode = require('qrcode');
+const fs = require('fs');
 const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.static('public'));
 
+// പെയറിംഗ് കോഡ് വഴി സെഷൻ എടുക്കാൻ
 app.get('/pair', async (req, res) => {
     let num = req.query.num;
-    if (!num) return res.send("Please provide a number.");
-    const { state, saveCreds } = await useMultiFileAuthState('temp_session');
-    const conn = makeWASocket({ auth: state, logger: pino({ level: 'silent' }) });
+    if (!num) return res.send("Please provide a number with country code (e.g., 919876543210)");
+    
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+    const conn = makeWASocket({
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
+        },
+        printQRInTerminal: false,
+        logger: pino({ level: 'silent' })
+    });
 
     if (!conn.authState.creds.registered) {
-        await delay(2000);
-        let code = await conn.requestPairingCode(num);
-        res.send(`<h1>Your Pairing Code: ${code}</h1><p>Enter this code in your WhatsApp Linked Devices.</p>`);
+        await delay(1500);
+        try {
+            let code = await conn.requestPairingCode(num);
+            res.send(`<h1>Your Pairing Code: <span style="color:blue">${code}</span></h1><p>Check your WhatsApp notification and enter this code.</p>`);
+        } catch (err) {
+            res.send("Error requesting pairing code. Please try again later.");
+        }
     }
 
     conn.ev.on('creds.update', saveCreds);
     conn.ev.on('connection.update', async (s) => {
-        if (s.connection === 'open') {
+        const { connection } = s;
+        if (connection === 'open') {
+            await delay(2000);
             const sessionID = Buffer.from(JSON.stringify(conn.authState.creds)).toString('base64');
-            await conn.sendMessage(conn.user.id, { text: `Zenx~${sessionID}` });
-            console.log("Session sent with Zenx~ format!");
+            const finalID = `ZENX~${sessionID}`;
+            
+            await conn.sendMessage(conn.user.id, { text: finalID });
+            console.log("Session ID sent in ZENX~ format!");
         }
     });
 });
 
+// QR Code വഴി സെഷൻ എടുക്കാൻ
 app.get('/qr', async (req, res) => {
-    const { state, saveCreds } = await useMultiFileAuthState('temp_qr');
-    const conn = makeWASocket({ auth: state, logger: pino({ level: 'silent' }) });
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_qr');
+    const conn = makeWASocket({
+        auth: state,
+        printQRInTerminal: false,
+        logger: pino({ level: 'silent' })
+    });
 
     conn.ev.on('connection.update', async (s) => {
         if (s.qr) {
             let url = await QRCode.toDataURL(s.qr);
-            res.send(`<h1>Scan this QR Code</h1><img src="${url}">`);
+            res.send(`<h1>Scan this QR Code</h1><img src="${url}" width="300">`);
         }
         if (s.connection === 'open') {
+            await delay(2000);
             const sessionID = Buffer.from(JSON.stringify(conn.authState.creds)).toString('base64');
-            await conn.sendMessage(conn.user.id, { text: `Zenx~${sessionID}` });
-            console.log("Session sent with Zenx~ format!");
+            const finalID = `ZENX~${sessionID}`;
+            
+            await conn.sendMessage(conn.user.id, { text: finalID });
+            console.log("Session ID sent in ZENX~ format!");
         }
     });
     conn.ev.on('creds.update', saveCreds);
 });
 
 app.listen(PORT, () => {
-    console.log(`Generator running on port ${PORT}`);
+    console.log(`ZENX Session Generator running on port ${PORT}`);
 });
