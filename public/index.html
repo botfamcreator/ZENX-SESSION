@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Session Generator</title>
+    <style>
+        body { font-family: Arial; text-align: center; margin-top: 50px; background: #f0f2f5; }
+        .btn { padding: 15px 30px; margin: 10px; cursor: pointer; border: none; border-radius: 5px; font-size: 18px; }
+        .qr { background: #25d366; color: white; }
+        .pair { background: #007bff; color: white; }
+    </style>
+</head>
+<body>
+    <h1>Select Login Method</h1>
+    <button class="btn qr" onclick="location.href='/qr'">Get QR Code</button>
+    <button class="btn pair" onclick="getPair()">Get Pairing Code</button>
+    <div id="output"></div>
+
+    <script>
+        function getPair() {
+            let num = prompt("Enter your WhatsApp number with country code (e.g. 919876543210):");
+            if (num) location.href = '/pair?num=' + num;
+        }
+    </script>
+</body>
+</html>
