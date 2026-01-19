@@ -1,79 +1,55 @@
-const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, delay, makeCacheableSignalKeyStore, jidNormalizedUser } = require('@whiskeysockets/baileys');
-const pino = require('pino');
-const QRCode = require('qrcode');
-const fs = require('fs');
-const path = require('path');
-const app = express();
-const PORT = process.env.PORT || 3000;
+let express = require("express");
+let app = express();
+let { toBuffer } = require("qrcode");
+const { default: makeWASocket, useSingleFileAuthState, Browsers, delay } = require("@adiwajshing/baileys");
+const pino = require("pino");
+const fs = require("fs");
+const PastebinAPI = require("pastebin-js");
 
-app.use(express.static('public'));
+const pastebin = new PastebinAPI("h4cO2gJEMwmgmBoteYufW6_weLvBYCqT");
+let PORT = process.env.PORT || 3030;
 
-// പെയറിംഗ് കോഡ് വഴി സെഷൻ എടുക്കാൻ
-app.get('/pair', async (req, res) => {
-    let num = req.query.num;
-    if (!num) return res.send("Please provide a number with country code (e.g., 919876543210)");
-    
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info');
-    const conn = makeWASocket({
-        auth: {
-            creds: state.creds,
-            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
-        },
-        printQRInTerminal: false,
-        logger: pino({ level: 'silent' })
-    });
+app.use("/", (req, res) => {
+  const authfile = `./tmp/${Math.random().toString(36).substring(2, 11)}.json`;
+  const { state, saveState } = useSingleFileAuthState(authfile);
 
-    if (!conn.authState.creds.registered) {
-        await delay(1500);
-        try {
-            let code = await conn.requestPairingCode(num);
-            res.send(`<h1>Your Pairing Code: <span style="color:blue">${code}</span></h1><p>Check your WhatsApp notification and enter this code.</p>`);
-        } catch (err) {
-            res.send("Error requesting pairing code. Please try again later.");
-        }
-    }
-
-    conn.ev.on('creds.update', saveCreds);
-    conn.ev.on('connection.update', async (s) => {
-        const { connection } = s;
-        if (connection === 'open') {
-            await delay(2000);
-            const sessionID = Buffer.from(JSON.stringify(conn.authState.creds)).toString('base64');
-            const finalID = `ZENX~${sessionID}`;
-            
-            await conn.sendMessage(conn.user.id, { text: finalID });
-            console.log("Session ID sent in ZENX~ format!");
-        }
-    });
-});
-
-// QR Code വഴി സെഷൻ എടുക്കാൻ
-app.get('/qr', async (req, res) => {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_qr');
-    const conn = makeWASocket({
+  async function startSession() {
+    try {
+      let session = makeWASocket({
         auth: state,
-        printQRInTerminal: false,
-        logger: pino({ level: 'silent' })
-    });
+        printQRInTerminal: true,
+        logger: pino({ level: "silent" }),
+        browser: Browsers.macOS("Desktop"),
+      });
 
-    conn.ev.on('connection.update', async (s) => {
+      session.ev.on("connection.update", async (s) => {
         if (s.qr) {
-            let url = await QRCode.toDataURL(s.qr);
-            res.send(`<h1>Scan this QR Code</h1><img src="${url}" width="300">`);
+          res.type('image/png');
+          res.end(await toBuffer(s.qr));
         }
-        if (s.connection === 'open') {
-            await delay(2000);
-            const sessionID = Buffer.from(JSON.stringify(conn.authState.creds)).toString('base64');
-            const finalID = `ZENX~${sessionID}`;
-            
-            await conn.sendMessage(conn.user.id, { text: finalID });
-            console.log("Session ID sent in ZENX~ format!");
-        }
-    });
-    conn.ev.on('creds.update', saveCreds);
-});
+        const { connection } = s;
+        if (connection == "open") {
+          await delay(5000);
+          
+          // Pastebin-ലേക്ക് അപ്‌ലോഡ് ചെയ്യുന്നു
+          let link = await pastebin.createPasteFromFile(authfile, "ZENX-SESSION", null, 1, "N");
+          let pasteID = link.replace("https://pastebin.com/", "");
+          let finalID = `ZENX~${pasteID}`;
 
-app.listen(PORT, () => {
-    console.log(`ZENX Session Generator running on port ${PORT}`);
+          await session.sendMessage(session.user.id, { text: finalID });
+          await session.sendMessage(session.user.id, {
+            document: { url: authfile },
+            fileName: "session.json",
+            mimetype: "application/json",
+          });
+
+          console.log("Session Generated: " + finalID);
+          setTimeout(() => { process.exit(0); }, 5000);
+        }
+      });
+      session.ev.on('creds.update', saveState);
+    } catch (err) { console.log(err); }
+  }
+  startSession();
 });
+app.listen(PORT, () => console.log("Session Gen on port", PORT));
