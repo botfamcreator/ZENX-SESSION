@@ -1,12 +1,15 @@
 {
-  "name": "session-generator-web",
+  "name": "zenx-session-generator",
   "version": "1.0.0",
+  "description": "WhatsApp Session Generator with Pastebin Support",
   "main": "server.js",
   "dependencies": {
     "@whiskeysockets/baileys": "latest",
     "express": "^4.18.2",
     "pino": "^8.16.0",
-    "qrcode": "^1.5.3"
+    "qrcode": "^1.5.3",
+    "pastebin-js": "^1.0.6",
+    "axios": "^1.6.2"
   },
   "scripts": {
     "start": "node server.js"
