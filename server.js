@@ -1,11 +1,13 @@
-let express = require("express");
-let app = express();
-let { toBuffer } = require("qrcode");
+const express = require("express");
+const app = express();
+const { toBuffer } = require("qrcode");
 const {
   default: makeWASocket,
   useMultiFileAuthState,
   Browsers,
   delay,
+  makeCacheableSignalKeyStore,
+  DisconnectReason
 } = require("@whiskeysockets/baileys");
 
 const pino = require("pino");
@@ -17,86 +19,124 @@ let PORT = process.env.PORT || 3030;
 
 app.get("/", (req, res) => {
   res.send(`
-    <div style="text-align:center; padding:50px; font-family:Arial;">
-      <h2>WhatsApp Session Generator</h2>
-      <button onclick="location.href='/qr'" style="padding:15px; margin:10px; background:green; color:white; border:none; cursor:pointer;">QR Code വഴി സ്കാൻ ചെയ്യുക</button>
-      <br>
-      <button onclick="pair()" style="padding:15px; margin:10px; background:blue; color:white; border:none; cursor:pointer;">Pairing Code വഴി കണക്ട് ചെയ്യുക</button>
-      <script>
-        function pair() {
-          let num = prompt("Enter your number with country code (e.g. 919876543210):");
-          if(num) location.href = '/pair?num=' + num;
-        }
-      </script>
-    </div>
+    <html>
+      <body style="font-family:Arial; text-align:center; padding-top:50px; background-color:#f4f4f9;">
+        <h2 style="color:#075e54;">WhatsApp Session Generator</h2>
+        <div style="margin:20px;">
+          <button onclick="location.href='/qr'" style="padding:15px 30px; background:#25d366; color:white; border:none; border-radius:5px; cursor:pointer; font-size:16px;">Get QR Code</button>
+        </div>
+        <div>
+          <button onclick="pair()" style="padding:15px 30px; background:#128c7e; color:white; border:none; border-radius:5px; cursor:pointer; font-size:16px;">Get Pairing Code</button>
+        </div>
+        <script>
+          function pair() {
+            let num = prompt("Enter your number with country code (e.g. 919876543210):");
+            if(num) location.href = '/pair?num=' + num;
+          }
+        </script>
+      </body>
+    </html>
   `);
 });
 
 app.get("/pair", async (req, res) => {
   let num = req.query.num;
-  const authfile = `./tmp/${Math.random().toString(36).substring(2, 11)}`;
-  const { state, saveCreds } = await useMultiFileAuthState(authfile);
+  if (!num) return res.send("Number is required!");
+
+  const authFolder = `./tmp/${num}_${Math.random().toString(36).substring(7)}`;
+  const { state, saveCreds } = await useMultiFileAuthState(authFolder);
 
   try {
     let session = makeWASocket({
-      auth: state,
+      auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
+      },
       printQRInTerminal: false,
       logger: pino({ level: "silent" }),
-      browser: ["Ubuntu", "Chrome", "20.0.04"]
+      browser: ["Chrome (Linux)", "", ""] // "Couldn't link device" ഒഴിവാക്കാൻ
     });
 
     if (!session.authState.creds.registered) {
-      await delay(1500);
+      await delay(3000); // കണക്ഷൻ സ്റ്റേബിൾ ആകാൻ സമയം നൽകുന്നു
       let code = await session.requestPairingCode(num);
-      res.send(`<h1 style="text-align:center; margin-top:50px;">Your Code: <span style="color:red">${code}</span></h1>`);
+      if (!res.headersSent) {
+        res.send(`
+          <div style="text-align:center; padding-top:50px; font-family:Arial;">
+            <h3>Your Pairing Code:</h3>
+            <h1 style="color:#ff0000; font-size:50px; letter-spacing:5px;">${code}</h1>
+            <p>Go to WhatsApp > Linked Devices > Link a Device > <b>Link with phone number instead</b></p>
+          </div>
+        `);
+      }
     }
 
     session.ev.on("creds.update", saveCreds);
     session.ev.on("connection.update", async (s) => {
-      if (s.connection === "open") {
-        await delay(5000);
-        let link = await pastebin.createPasteFromFile(`${authfile}/creds.json`, "Millie-MD session", null, 0, "N");
+      const { connection, lastDisconnect } = s;
+      if (connection === "open") {
+        await delay(10000); // ഫയൽ സേവ് ആകാൻ 10 സെക്കൻഡ് നൽകുന്നു
+        
+        let link = await pastebin.createPasteFromFile(`${authFolder}/creds.json`, "Millie-MD session", null, 0, "N");
         let data = link.replace("https://pastebin.com/", "");
         
-        // നീ ആദ്യം തന്ന അതേ XASENA ഫോർമാറ്റ് ലോജിക്
+        // പഴയ രീതിയിലുള്ള സെഷൻ ഐഡി ജനറേഷൻ
         let code = btoa(data);
         var words = code.split("");
         var ress = words[Math.floor(words.length / 2)];
-        let c = code.split(ress).join(ress + "_XASENA_");
+        let finalID = code.split(ress).join(ress + "_XASENA_");
 
-        await session.sendMessage(session.user.id, { text: c });
-        await session.sendMessage(session.user.id, {
-          document: { url: `${authfile}/creds.json` },
-          fileName: "session.json",
-          mimetype: "application/json",
-        });
-
-        setTimeout(() => { process.exit(0); }, 5000);
+        await session.sendMessage(session.user.id, { text: finalID });
+        
+        // ക്ലീനപ്പ്
+        setTimeout(() => {
+          try { fs.rmSync(authFolder, { recursive: true, force: true }); } catch (e) {}
+          process.exit(0);
+        }, 5000);
+      }
+      
+      if (connection === "close") {
+        let reason = lastDisconnect?.error?.output?.statusCode;
+        if (reason !== DisconnectReason.loggedOut) {
+          console.log("Connection closed, retrying...");
+        }
       }
     });
-  } catch (err) { res.send("Error: " + err.message); }
+  } catch (err) {
+    console.log(err);
+    if (!res.headersSent) res.send("Error occurred. Please try again.");
+  }
 });
 
 app.get("/qr", async (req, res) => {
-  const authfile = `./tmp/qr_${Math.random().toString(36).substring(2, 11)}`;
-  const { state, saveCreds } = await useMultiFileAuthState(authfile);
-  let session = makeWASocket({ auth: state, logger: pino({ level: "silent" }), browser: Browsers.macOS("Desktop") });
+  const authFolder = `./tmp/qr_${Math.random().toString(36).substring(7)}`;
+  const { state, saveCreds } = await useMultiFileAuthState(authFolder);
+  
+  let session = makeWASocket({
+    auth: state,
+    logger: pino({ level: "silent" }),
+    browser: Browsers.macOS("Desktop")
+  });
 
   session.ev.on("connection.update", async (s) => {
-    if (s.qr) { res.type('image/png'); res.end(await toBuffer(s.qr)); }
+    if (s.qr) {
+      res.type('image/png');
+      res.end(await toBuffer(s.qr));
+    }
     if (s.connection === "open") {
-      await delay(5000);
-      let link = await pastebin.createPasteFromFile(`${authfile}/creds.json`, "Millie-MD session", null, 0, "N");
+      await delay(10000);
+      let link = await pastebin.createPasteFromFile(`${authFolder}/creds.json`, "Millie-MD session", null, 0, "N");
       let data = link.replace("https://pastebin.com/", "");
       let code = btoa(data);
       var words = code.split("");
       var ress = words[Math.floor(words.length / 2)];
-      let c = code.split(ress).join(ress + "_XASENA_");
-      await session.sendMessage(session.user.id, { text: c });
+      let finalID = code.split(ress).join(ress + "_XASENA_");
+      
+      await session.sendMessage(session.user.id, { text: finalID });
       process.exit(0);
     }
   });
   session.ev.on("creds.update", saveCreds);
 });
 
-app.listen(PORT, () => console.log("Server listening on port", PORT));
+app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
